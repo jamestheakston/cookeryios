@@ -696,15 +696,23 @@ struct LoginScreen: View {
         ScrollView {
             VStack(spacing: 0) {
                 ZStack {
-                    if let uiImage = UIImage(named: "cooking") {
-                        Image(uiImage: uiImage)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(height: 500)
-                            .clipped()
-                    } else {
-                        Color.brandGold
-                            .frame(height: 500)
+                    AsyncImage(url: URL(string: "https://www.foodandwine.com/thmb/qAtnHoXWIt1G-juVAPP8Rw0uh1I=/1500x0/filters:no_upscale():max_bytes(150000):strip_icc()/Cooking-Competition-Confessional-FT-BLOG0607-668196333dc640c7b3db70d26a785361.jpg")) { phase in
+                        switch phase {
+                        case .empty:
+                            Color.brandGold
+                                .frame(height: 500)
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(height: 500)
+                                .clipped()
+                        case .failure:
+                            Color.brandGold
+                                .frame(height: 500)
+                        @unknown default:
+                            EmptyView()
+                        }
                     }
                     
                     LinearGradient(
@@ -1192,13 +1200,14 @@ struct ContentView: View {
                 Label("Home", systemImage: "house.fill")
             }
             .tag(0)
+        }
         
         CommunityView()
             .tabItem {
                 Label("Community", systemImage: "person.2.fill")
             }
             .tag(1)
-        }
+    }
     
     private func loadRecipes() {
         if let data = UserDefaults.standard.data(forKey: recipesKey),
