@@ -1,5 +1,6 @@
 import SwiftUI
 import StoreKit
+import Combine
 
 extension Color {
     static let brandBg = Color(red: 250/255, green: 248/255, blue: 245/255)
@@ -27,7 +28,7 @@ enum CreationMode {
     case ai, ingredients, manual
 }
 
-class SupabaseAuth: ObservableObject {
+class SupabaseAuth: ObservableObject, @unchecked Sendable {
     @Published var isAuthenticated: Bool = false
     @Published var errorMessage: String? = nil
     @Published var isLoading: Bool = false
@@ -96,13 +97,11 @@ class SupabaseAuth: ObservableObject {
     }
     
     func loadProduct() {
-        Task {
+        Task { @MainActor in
             do {
                 let products = try await Product.products(for: [chefProductId])
                 if let product = products.first {
-                    DispatchQueue.main.async {
-                        self.product = product
-                    }
+                    self.product = product
                 }
             } catch {
                 print("Failed to load product: \(error)")
@@ -163,7 +162,7 @@ class SupabaseAuth: ObservableObject {
         }
     }
     
-    private func checkVerified<T>(_ verification: Verification<T>) throws -> T {
+    private func checkVerified<T>(_ verification: VerificationResult<T>) throws -> T {
         switch verification {
         case .unverified:
             throw PurchaseError.failedVerification
@@ -174,13 +173,13 @@ class SupabaseAuth: ObservableObject {
     
     private func listenForTransactions() -> Task<Void, Error> {
         return Task.detached {
-            for await result in Transaction.updates {
+            for await result in StoreKit.Transaction.updates {
                 await self.handleTransaction(result)
             }
         }
     }
     
-    private func handleTransaction(_ result: VerificationResult<Transaction>) async {
+    private func handleTransaction(_ result: VerificationResult<StoreKit.Transaction>) async {
         let transaction = try? checkVerified(result)
         
         guard let transaction = transaction else {
@@ -403,23 +402,6 @@ struct LoginScreen: View {
     }
 }
 
-@main
-struct CookeryAIApp: App {
-    @StateObject private var auth = SupabaseAuth()
-    
-    var body: some Scene {
-        WindowGroup {
-            if auth.isAuthenticated {
-                ContentView()
-                    .environmentObject(auth)
-            } else {
-                LoginScreen()
-                    .environmentObject(auth)
-            }
-        }
-    }
-}
-
 struct ContentView: View {
     @EnvironmentObject var auth: SupabaseAuth
     @State private var recipes: [Recipe] = [
@@ -612,7 +594,7 @@ struct ContentView: View {
                         auth.showUpgradeModal = false
                         auth.purchaseState = .idle
                     }
-                    if let product = auth.product {
+                    if auth.product != nil {
                         Button("Upgrade Now") {
                             auth.upgradeToChef()
                         }
