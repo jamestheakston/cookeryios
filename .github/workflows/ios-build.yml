@@ -25,6 +25,10 @@ jobs:
           # Copies the required metadata plist file into the folder
           cp Info.plist Payload/MyCloudApp.app/Info.plist
           
+          # Copies your custom icon assets into the folder
+          cp AppIcon@2x.png Payload/MyCloudApp.app/AppIcon@2x.png
+          cp AppIcon@3x.png Payload/MyCloudApp.app/AppIcon@3x.png
+          
           # Zips the folder into a valid .ipa package
           zip -r MyCloudApp.ipa Payload
 

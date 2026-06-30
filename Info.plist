@@ -24,5 +24,17 @@
     <string>15.0</string>
     <key>UILaunchScreen</key>
     <dict/>
+    <key>CFBundleIcons</key>
+    <dict>
+        <key>CFBundlePrimaryIcon</key>
+        <dict>
+            <key>CFBundleIconFiles</key>
+            <array>
+                <string>AppIcon</string>
+            </array>
+            <key>UIPrerenderedIcon</key>
+            <false/>
+        </dict>
+    </dict>
 </dict>
 </plist>
