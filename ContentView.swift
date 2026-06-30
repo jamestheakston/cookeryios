@@ -12,16 +12,28 @@ extension Color {
     static let brandBorder = Color(red: 230/255, green: 225/255, blue: 218/255)
 }
 
-struct Recipe: Identifiable {
-    let id = UUID()
-    let title: String
-    let description: String
-    let ingredients: [String]
-    let instructions: [String]
-    let prepTime: Int
-    let imageUrl: String?
-    let photographerName: String?
-    let photographerUrl: String?
+struct Recipe: Identifiable, Codable {
+    let id: UUID
+    var title: String
+    var description: String
+    var ingredients: [String]
+    var instructions: [String]
+    var prepTime: Int
+    var imageUrl: String?
+    var photographerName: String?
+    var photographerUrl: String?
+    
+    init(id: UUID = UUID(), title: String, description: String, ingredients: [String], instructions: [String], prepTime: Int, imageUrl: String?, photographerName: String?, photographerUrl: String?) {
+        self.id = id
+        self.title = title
+        self.description = description
+        self.ingredients = ingredients
+        self.instructions = instructions
+        self.prepTime = prepTime
+        self.imageUrl = imageUrl
+        self.photographerName = photographerName
+        self.photographerUrl = photographerUrl
+    }
 }
 
 enum CreationMode {
@@ -40,12 +52,20 @@ class SupabaseAuth: ObservableObject, @unchecked Sendable {
     @Published var isProcessingPayment: Bool = false
     @Published var product: Product? = nil
     @Published var purchaseState: PurchaseState = .idle
+    @Published var unsplashAccessKey: String? = nil
+    @Published var unsplashSecretKey: String? = nil
+    @Published var googleApiKey: String? = nil
     
     private let projectUrl = "https://ojvigxnwweixjhugekmm.supabase.co"
     private let apiKey = "sb_publishable_ok_vkZ1FDJ_hv-qdv76tJw_RJ78nd6W"
     private let dailyQuota = 3
     private let chefProductId = "com.cookery.chef.upgrade"
     private var updateListenerTask: Task<Void, Error>? = nil
+    
+    private let authKey = "cookery_auth_state"
+    private let chefKey = "cookery_chef_status"
+    private let recipeCountKey = "cookery_daily_count"
+    private let lastDateKey = "cookery_last_date"
     
     enum PurchaseState {
         case idle
@@ -55,7 +75,9 @@ class SupabaseAuth: ObservableObject, @unchecked Sendable {
     }
     
     init() {
+        loadPersistedState()
         updateListenerTask = listenForTransactions()
+        fetchSecrets()
     }
     
     deinit {
@@ -94,6 +116,7 @@ class SupabaseAuth: ObservableObject, @unchecked Sendable {
             dailyRecipeCount = 1
             lastRecipeDate = Date()
         }
+        saveQuotaState()
     }
     
     func loadProduct() {
@@ -133,6 +156,7 @@ class SupabaseAuth: ObservableObject, @unchecked Sendable {
                         self.purchaseState = .purchased
                         self.showUpgradeModal = false
                         self.showQuotaModal = false
+                        self.saveChefStatus()
                     }
                     
                 case .userCancelled:
@@ -189,6 +213,7 @@ class SupabaseAuth: ObservableObject, @unchecked Sendable {
         if transaction.productID == chefProductId {
             await MainActor.run {
                 self.isChef = true
+                self.saveChefStatus()
             }
             await transaction.finish()
         }
@@ -236,6 +261,7 @@ extension SupabaseAuth {
                 if let httpResponse = response as? HTTPURLResponse {
                     if (200...299).contains(httpResponse.statusCode) {
                         self.isAuthenticated = true
+                        self.saveAuthState()
                     } else {
                         if let data = data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                            let msg = json["error_description"] as? String ?? json["msg"] as? String {
@@ -251,6 +277,198 @@ extension SupabaseAuth {
     
     func signOut() {
         self.isAuthenticated = false
+        UserDefaults.standard.set(false, forKey: authKey)
+    }
+    
+    func continueWithoutAccount() {
+        self.isAuthenticated = true
+        UserDefaults.standard.set(true, forKey: authKey)
+    }
+    
+    private func loadPersistedState() {
+        self.isAuthenticated = UserDefaults.standard.bool(forKey: authKey)
+        self.isChef = UserDefaults.standard.bool(forKey: chefKey)
+        self.dailyRecipeCount = UserDefaults.standard.integer(forKey: recipeCountKey)
+        if let lastDate = UserDefaults.standard.object(forKey: lastDateKey) as? Date {
+            self.lastRecipeDate = lastDate
+        }
+    }
+    
+    private func saveAuthState() {
+        UserDefaults.standard.set(isAuthenticated, forKey: authKey)
+    }
+    
+    private func saveChefStatus() {
+        UserDefaults.standard.set(isChef, forKey: chefKey)
+    }
+    
+    private func saveQuotaState() {
+        UserDefaults.standard.set(dailyRecipeCount, forKey: recipeCountKey)
+        if let lastDate = lastRecipeDate {
+            UserDefaults.standard.set(lastDate, forKey: lastDateKey)
+        }
+    }
+    
+    func fetchSecrets() {
+        fetchUnsplashKeys()
+        fetchGoogleApiKey()
+    }
+    
+    private func fetchUnsplashKeys() {
+        Task { @MainActor in
+            do {
+                let urlString = "\(projectUrl)/rest/v1/secrets?key_name=eq.unsplash_access_key&select=key_value,secret_key"
+                guard let url = URL(string: urlString) else { return }
+                
+                var request = URLRequest(url: url)
+                request.setValue(apiKey, forHTTPHeaderField: "apikey")
+                request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+                
+                let (data, _) = try await URLSession.shared.data(for: request)
+                if let json = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                   let secret = json.first {
+                    self.unsplashAccessKey = secret["key_value"] as? String
+                    self.unsplashSecretKey = secret["secret_key"] as? String
+                }
+            } catch {
+                print("Failed to fetch Unsplash keys: \(error)")
+            }
+        }
+    }
+    
+    private func fetchGoogleApiKey() {
+        Task { @MainActor in
+            do {
+                let urlString = "\(projectUrl)/rest/v1/secrets?key_name=eq.lola_api_key&select=key_value"
+                guard let url = URL(string: urlString) else { return }
+                
+                var request = URLRequest(url: url)
+                request.setValue(apiKey, forHTTPHeaderField: "apikey")
+                request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+                
+                let (data, _) = try await URLSession.shared.data(for: request)
+                if let json = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                   let secret = json.first {
+                    self.googleApiKey = secret["key_value"] as? String
+                }
+            } catch {
+                print("Failed to fetch Google API key: \(error)")
+            }
+        }
+    }
+    
+    func fetchFoodImage(query: String = "food") async -> String? {
+        guard let accessKey = unsplashAccessKey else {
+            fetchUnsplashKeys()
+            return nil
+        }
+        
+        do {
+            let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "food"
+            let urlString = "https://api.unsplash.com/photos/random?query=\(encodedQuery)&count=1&client_id=\(accessKey)"
+            guard let url = URL(string: urlString) else { return nil }
+            
+            let (data, _) = try await URLSession.shared.data(for: url)
+            if let json = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+               let photo = json.first,
+               let imageUrl = photo["urls"] as? [String: Any],
+               let regularUrl = imageUrl["regular"] as? String {
+                
+                if let photoId = photo["id"] as? String {
+                    let downloadUrl = "https://api.unsplash.com/photos/\(photoId)/download?client_id=\(accessKey)"
+                    if let downloadURL = URL(string: downloadUrl) {
+                        try? await URLSession.shared.data(from: downloadURL)
+                    }
+                }
+                
+                return regularUrl
+            }
+        } catch {
+            print("Failed to fetch Unsplash image: \(error)")
+        }
+        
+        return nil
+    }
+    
+    func generateRecipe(prompt: String, dietary: [String], style: String) async -> Recipe? {
+        guard let apiKey = googleApiKey else {
+            fetchGoogleApiKey()
+            return nil
+        }
+        
+        do {
+            let dietaryText = dietary.isEmpty ? "no dietary restrictions" : dietary.joined(separator: ", ")
+            let systemPrompt = "You are a professional chef. Generate a detailed recipe based on the user's request. Return the response in JSON format with the following structure: {\"title\": \"recipe title\", \"description\": \"brief description\", \"ingredients\": [\"ingredient 1\", \"ingredient 2\"], \"instructions\": [\"step 1\", \"step 2\"], \"prepTime\": 30}"
+            
+            let userPrompt = "Create a recipe for: \(prompt). Style: \(style). Dietary requirements: \(dietaryText)."
+            
+            let urlString = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=\(apiKey)"
+            guard let url = URL(string: urlString) else { return nil }
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            
+            let requestBody: [String: Any] = [
+                "contents": [
+                    [
+                        "role": "user",
+                        "parts": [
+                            ["text": systemPrompt],
+                            ["text": userPrompt]
+                        ]
+                    ]
+                ],
+                "generationConfig": [
+                    "temperature": 0.7,
+                    "maxOutputTokens": 1024
+                ]
+            ]
+            
+            request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+            
+            let (data, _) = try await URLSession.shared.data(for: request)
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let candidates = json["candidates"] as? [[String: Any]],
+               let firstCandidate = candidates.first,
+               let content = firstCandidate["content"] as? [String: Any],
+               let parts = content["parts"] as? [[String: Any]],
+               let firstPart = parts.first,
+               let text = firstPart["text"] as? String {
+                
+                let jsonPattern = "\\{\\s*\\\"title\\\"\\s*:\\s*\\\"([^\"]+)\\\"\\s*,\\s*\\\"description\\\"\\s*:\\s*\\\"([^\"]+)\\\"\\s*,\\s*\\\"ingredients\\\"\\s*:\\s*\\[([^\]]+)\\]\\s*,\\s*\\\"instructions\\\"\\s*:\\s*\\[([^\]]+)\\]\\s*,\\s*\\\"prepTime\\\"\\s*:\\s*(\\d+)"
+                
+                if let regex = try? NSRegularExpression(pattern: jsonPattern, options: []),
+                   let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) {
+                    
+                    let title = (text as NSString).substring(with: match.range(at: 1))
+                    let description = (text as NSString).substring(with: match.range(at: 2))
+                    let ingredientsString = (text as NSString).substring(with: match.range(at: 3))
+                    let instructionsString = (text as NSString).substring(with: match.range(at: 4))
+                    let prepTime = Int((text as NSString).substring(with: match.range(at: 5))) ?? 20
+                    
+                    let ingredients = ingredientsString.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\"", with: "") }
+                    let instructions = instructionsString.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\"", with: "") }
+                    
+                    let imageUrl = await fetchFoodImage(query: title)
+                    
+                    return Recipe(
+                        title: title,
+                        description: description,
+                        ingredients: ingredients,
+                        instructions: instructions,
+                        prepTime: prepTime,
+                        imageUrl: imageUrl,
+                        photographerName: "Unsplash",
+                        photographerUrl: "https://unsplash.com"
+                    )
+                }
+            }
+        } catch {
+            print("Failed to generate recipe: \(error)")
+        }
+        
+        return nil
     }
 }
 
@@ -276,159 +494,235 @@ struct LoginScreen: View {
     @State private var email = ""
     @State private var password = ""
     @State private var isSignUpMode = false
+    @State private var showAuthForm = false
     
     var body: some View {
-        ZStack {
-            Color.brandBg.ignoresSafeArea()
-            
-            ScrollView {
-                VStack(spacing: 24) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        VStack(alignment: .leading, spacing: 16) {
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+        VStack {
+            if showAuthForm {
+                authForm
+            } else {
+                welcomeScreen
+            }
+        }
+        .background(Color.brandBg.ignoresSafeArea())
+    }
+    
+    private var welcomeScreen: some View {
+        VStack {
+            VStack {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(Color.brandCard)
+                    .frame(width: 356, height: 480)
+                    .overlay(alignment: .topLeading) {
+                        VStack(alignment: .leading, spacing: 11) {
+                            RoundedRectangle(cornerRadius: 17, style: .continuous)
                                 .fill(Color.brandGold)
-                                .frame(width: 64, height: 64)
-                                .shadow(color: Color.brandText.opacity(0.1), radius: 6, x: 0, y: 3)
+                                .frame(width: 72, height: 72)
+                                .shadow(color: Color.brandText.opacity(0.12), radius: 8, x: 0, y: 4)
                                 .overlay {
                                     Image(systemName: "fork.knife")
-                                        .font(.system(size: 26, weight: .medium))
+                                        .font(.system(size: 32, weight: .medium))
                                         .foregroundColor(.white)
                                 }
-                            
-                            VStack(alignment: .leading, spacing: 4) {
+                            VStack(alignment: .leading, spacing: 1) {
                                 Text("Cookery")
                                     .font(.system(.largeTitle, design: .serif))
-                                    .fontWeight(.bold)
+                                    .fontWeight(.medium)
                                     .foregroundColor(.brandText)
                                 Text("Welcome to the future of recipes.")
-                                    .font(.subheadline)
+                                    .font(.system(.headline, design: .serif))
+                                    .fontWeight(.medium)
                                     .foregroundColor(.brandSecondary)
+                                    .frame(width: 190, alignment: .leading)
                             }
                         }
-                        .padding(24)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                        .padding(.top, 42)
                     }
-                    .background(Color.brandCard)
-                    .mask { RoundedRectangle(cornerRadius: 28, style: .continuous) }
-                    .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Color.brandBorder, lineWidth: 1))
-                    .padding(.horizontal)
-                    .padding(.top, 20)
-                    .shadow(color: Color.brandText.opacity(0.04), radius: 12, x: 0, y: 6)
-                    
-                    VStack(spacing: 16) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Email Address")
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.brandSecondary)
-                            TextField("name@example.com", text: $email)
-                                .keyboardType(.emailAddress)
-                                .autocapitalization(.none)
-                                .padding()
-                                .background(Color.brandBg)
-                                .cornerRadius(12)
-                        }
-                        
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Password")
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.brandSecondary)
-                            SecureField("••••••••", text: $password)
-                                .padding()
-                                .background(Color.brandBg)
-                                .cornerRadius(12)
+                    .overlay(alignment: .bottom) {
+                        Group {
+                            
                         }
                     }
-                    .padding(20)
-                    .background(Color.brandCard)
-                    .cornerRadius(24)
-                    .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.brandBorder, lineWidth: 1))
-                    .padding(.horizontal)
-                    
-                    if let error = auth.errorMessage {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundColor(.red)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                    }
-                    
-                    VStack(spacing: 12) {
-                        Button(action: {
-                            if isSignUpMode {
-                                auth.signUp(email: email, password: password)
-                            } else {
-                                auth.signIn(email: email, password: password)
-                            }
-                        }) {
-                            HStack {
-                                if auth.isLoading {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                } else {
-                                    Text(isSignUpMode ? "Create Account" : "Sign In")
-                                        .font(.headline)
-                                        .fontWeight(.semibold)
-                                }
-                            }
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 52)
-                            .background(email.isEmpty || password.isEmpty ? Color.brandSecondary.opacity(0.5) : Color.brandText)
-                            .cornerRadius(16)
+                    .padding()
+                    .padding(.top, 40)
+                    .shadow(color: Color.brandText.opacity(0.15), radius: 18, x: 0, y: 14)
+            }
+            
+            VStack(spacing: 10) {
+                Button(action: { showAuthForm = true }) {
+                    Text("Get Started")
+                        .font(.system(.body, weight: .medium))
+                        .padding(.vertical, 16)
+                        .frame(maxWidth: .infinity)
+                        .foregroundColor(.brandText)
+                        .background {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color.brandGoldLight)
                         }
-                        .disabled(email.isEmpty || password.isEmpty || auth.isLoading)
-                        
-                        Button(action: { isSignUpMode.toggle() }) {
-                            Text(isSignUpMode ? "Already have an account? Sign In" : "Don't have an account? Sign Up")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                                .foregroundColor(Color.brandGold)
-                                .padding(.vertical, 8)
+                }
+                
+                Button(action: { showAuthForm = true }) {
+                    Text("Login")
+                        .font(.system(.body, weight: .medium))
+                        .padding(.vertical, 16)
+                        .frame(maxWidth: .infinity)
+                        .foregroundColor(.brandText)
+                        .background {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color.brandGoldLight)
                         }
-                        
-                        Button(action: { auth.isAuthenticated = true }) {
-                            Text("Try without an account")
-                                .font(.caption)
-                                .foregroundColor(.brandSecondary)
-                                .padding(.top, 8)
-                        }
-                    }
-                    .padding(.horizontal)
+                }
+                
+                Button(action: { auth.continueWithoutAccount() }) {
+                    Text("Try without an account")
+                        .padding(.top)
+                        .foregroundColor(.brandSecondary)
+                        .font(.subheadline)
                 }
             }
+            .padding(.horizontal)
+            Spacer()
+        }
+    }
+    
+    private var authForm: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                Button(action: { showAuthForm = false }) {
+                    HStack {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 16, weight: .semibold))
+                        Text("Back")
+                            .font(.system(.body, weight: .medium))
+                    }
+                    .foregroundColor(.brandText)
+                    .padding(.horizontal)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                
+                VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(Color.brandGold)
+                            .frame(width: 64, height: 64)
+                            .shadow(color: Color.brandText.opacity(0.1), radius: 6, x: 0, y: 3)
+                            .overlay {
+                                Image(systemName: "fork.knife")
+                                    .font(.system(size: 26, weight: .medium))
+                                    .foregroundColor(.white)
+                            }
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(isSignUpMode ? "Create Account" : "Sign In")
+                                .font(.system(.largeTitle, design: .serif))
+                                .fontWeight(.bold)
+                                .foregroundColor(.brandText)
+                            Text(isSignUpMode ? "Enter your details to get started" : "Welcome back to Cookery")
+                                .font(.subheadline)
+                                .foregroundColor(.brandSecondary)
+                        }
+                    }
+                    .padding(24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .background(Color.brandCard)
+                .mask { RoundedRectangle(cornerRadius: 28, style: .continuous) }
+                .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Color.brandBorder, lineWidth: 1))
+                .padding(.horizontal)
+                .shadow(color: Color.brandText.opacity(0.04), radius: 12, x: 0, y: 6)
+                
+                VStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Email Address")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.brandSecondary)
+                        TextField("name@example.com", text: $email)
+                            .keyboardType(.emailAddress)
+                            .autocapitalization(.none)
+                            .padding()
+                            .background(Color.brandBg)
+                            .cornerRadius(12)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Password")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.brandSecondary)
+                        SecureField("••••••••", text: $password)
+                            .padding()
+                            .background(Color.brandBg)
+                            .cornerRadius(12)
+                    }
+                }
+                .padding(20)
+                .background(Color.brandCard)
+                .cornerRadius(24)
+                .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.brandBorder, lineWidth: 1))
+                .padding(.horizontal)
+                
+                if let error = auth.errorMessage {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+                
+                VStack(spacing: 12) {
+                    Button(action: {
+                        if isSignUpMode {
+                            auth.signUp(email: email, password: password)
+                        } else {
+                            auth.signIn(email: email, password: password)
+                        }
+                    }) {
+                        HStack {
+                            if auth.isLoading {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            } else {
+                                Text(isSignUpMode ? "Create Account" : "Sign In")
+                                    .font(.headline)
+                                    .fontWeight(.semibold)
+                            }
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .background(email.isEmpty || password.isEmpty ? Color.brandSecondary.opacity(0.5) : Color.brandText)
+                        .cornerRadius(16)
+                    }
+                    .disabled(email.isEmpty || password.isEmpty || auth.isLoading)
+                    
+                    Button(action: { isSignUpMode.toggle() }) {
+                        Text(isSignUpMode ? "Already have an account? Sign In" : "Don't have an account? Sign Up")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(Color.brandGold)
+                            .padding(.vertical, 8)
+                    }
+                }
+                .padding(.horizontal)
+            }
+            .padding(.vertical)
         }
     }
 }
 
 struct ContentView: View {
     @EnvironmentObject var auth: SupabaseAuth
-    @State private var recipes: [Recipe] = [
-        Recipe(
-            title: "Classic Avocado Toast",
-            description: "A quick, creamy, and crispy breakfast favorite.",
-            ingredients: ["1 slice of sourdough bread", "1/2 ripe avocado", "1 tsp chili flakes", "Salt & pepper to taste"],
-            instructions: ["Toast the bread to your desired crispiness.", "Mash the avocado in a bowl with salt and pepper.", "Spread evenly over the toast and top with chili flakes."],
-            prepTime: 5,
-            imageUrl: "https://images.unsplash.com/photo-1541519227354-08fa5d50c44d?q=80&w=600&auto=format&fit=crop",
-            photographerName: "Annie Spratt",
-            photographerUrl: "https://unsplash.com/@anniespratt"
-        ),
-        Recipe(
-            title: "Quick Garlic Pasta",
-            description: "A simple, comforting Italian dinner made in under 15 minutes.",
-            ingredients: ["200g Spaghetti", "3 cloves garlic, sliced", "2 tbsp olive oil", "Fresh parsley"],
-            instructions: ["Boil pasta in salted water according to package instructions.", "Sauté garlic in olive oil over low heat until golden.", "Toss pasta in the garlic oil and garnish with chopped parsley."],
-            prepTime: 15,
-            imageUrl: "https://images.unsplash.com/photo-1621996346565-e3dbc646d9a9?q=80&w=600&auto=format&fit=crop",
-            photographerName: "Lindsay Almond",
-            photographerUrl: "https://unsplash.com/@lindsayalmond"
-        )
-    ]
-    
+    @State private var recipes: [Recipe] = []
     @State private var selectedRecipe: Recipe? = nil
     @State private var showingGenerator = false
+    @State private var showingEditSheet = false
+    @State private var editingRecipe: Recipe? = nil
+    @State private var showingDeleteAlert = false
+    @State private var recipeToDelete: Recipe? = nil
+    
+    private let recipesKey = "cookery_recipes"
     
     var body: some View {
         NavigationView {
@@ -563,6 +857,14 @@ struct ContentView: View {
                                             .stroke(Color.brandBorder, lineWidth: 1)
                                     )
                                 }
+                                .contextMenu {
+                                    Button(action: { editRecipe(recipe) }) {
+                                        Label("Edit", systemImage: "pencil")
+                                    }
+                                    Button(action: { recipeToDelete = recipe; showingDeleteAlert = true }) {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
                                 .padding(.horizontal)
                             }
                         }
@@ -613,10 +915,76 @@ struct ContentView: View {
                     Text("Loading pricing...")
                 }
             }
+            .alert("Delete Recipe", isPresented: $showingDeleteAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete", role: .destructive) {
+                    if let recipe = recipeToDelete {
+                        deleteRecipe(recipe)
+                    }
+                }
+            } message: {
+                Text("Are you sure you want to delete this recipe?")
+            }
+            .sheet(item: $editingRecipe) { recipe in
+                EditRecipeSheet(recipe: recipe, onSave: { updatedRecipe in
+                    if let index = recipes.firstIndex(where: { $0.id == updatedRecipe.id }) {
+                        recipes[index] = updatedRecipe
+                    }
+                })
+            }
         }
         .onAppear {
             auth.loadProduct()
+            loadRecipes()
         }
+        .onChange(of: recipes) { _ in
+            saveRecipes()
+        }
+    }
+    
+    private func loadRecipes() {
+        if let data = UserDefaults.standard.data(forKey: recipesKey),
+           let decoded = try? JSONDecoder().decode([Recipe].self, from: data) {
+            recipes = decoded
+        } else {
+            recipes = [
+                Recipe(
+                    title: "Classic Avocado Toast",
+                    description: "A quick, creamy, and crispy breakfast favorite.",
+                    ingredients: ["1 slice of sourdough bread", "1/2 ripe avocado", "1 tsp chili flakes", "Salt & pepper to taste"],
+                    instructions: ["Toast the bread to your desired crispiness.", "Mash the avocado in a bowl with salt and pepper.", "Spread evenly over the toast and top with chili flakes."],
+                    prepTime: 5,
+                    imageUrl: "https://images.unsplash.com/photo-1541519227354-08fa5d50c44d?q=80&w=600&auto=format&fit=crop",
+                    photographerName: "Annie Spratt",
+                    photographerUrl: "https://unsplash.com/@anniespratt"
+                ),
+                Recipe(
+                    title: "Quick Garlic Pasta",
+                    description: "A simple, comforting Italian dinner made in under 15 minutes.",
+                    ingredients: ["200g Spaghetti", "3 cloves garlic, sliced", "2 tbsp olive oil", "Fresh parsley"],
+                    instructions: ["Boil pasta in salted water according to package instructions.", "Sauté garlic in olive oil over low heat until golden.", "Toss pasta in the garlic oil and garnish with chopped parsley."],
+                    prepTime: 15,
+                    imageUrl: "https://images.unsplash.com/photo-1621996346565-e3dbc646d9a9?q=80&w=600&auto=format&fit=crop",
+                    photographerName: "Lindsay Almond",
+                    photographerUrl: "https://unsplash.com/@lindsayalmond"
+                )
+            ]
+        }
+    }
+    
+    private func saveRecipes() {
+        if let encoded = try? JSONEncoder().encode(recipes) {
+            UserDefaults.standard.set(encoded, forKey: recipesKey)
+        }
+    }
+    
+    private func deleteRecipe(_ recipe: Recipe) {
+        recipes.removeAll { $0.id == recipe.id }
+    }
+    
+    private func editRecipe(_ recipe: Recipe) {
+        editingRecipe = recipe
+        showingEditSheet = true
     }
 }
 
@@ -771,6 +1139,7 @@ struct AIGeneratorView: View {
     @EnvironmentObject var auth: SupabaseAuth
     
     @State private var selectedMode: CreationMode = .ai
+    @State private var isGenerating = false
     
     @State private var cravingInput = ""
     @State private var selectedDietaryRequirements: Set<String> = []
@@ -1089,31 +1458,44 @@ struct AIGeneratorView: View {
                     return
                 }
                 
-                let generatedTitle = cravingInput.isEmpty ? "AI Generated Recipe" : cravingInput
-                let dietaryText = selectedDietaryRequirements.isEmpty ? "No specific dietary requirements" : selectedDietaryRequirements.joined(separator: ", ")
-                let randomImageId = ["1541519227354-08fa5d50c44d", "1621996346565-e3dbc646d9a9", "1495195129352-aec325b55b65", "1504674900247-97ec8e7455f2"].randomElement() ?? "1541519227354-08fa5d50c44d"
-                let newRecipe = Recipe(
-                    title: generatedTitle,
-                    description: "AI tailored recipe with \(selectedStyle) style. Dietary considerations: \(dietaryText).",
-                    ingredients: ["AI-selected ingredients based on your preferences"],
-                    instructions: ["Follow AI-generated steps tailored to your craving and dietary needs."],
-                    prepTime: 25,
-                    imageUrl: "https://images.unsplash.com/photo-\(randomImageId)?q=80&w=600&auto=format&fit=crop",
-                    photographerName: "Unsplash",
-                    photographerUrl: "https://unsplash.com"
-                )
-                recipes.append(newRecipe)
-                auth.incrementRecipeCount()
-                isPresented = false
+                isGenerating = true
+                
+                Task {
+                    let dietaryArray = Array(selectedDietaryRequirements)
+                    if let generatedRecipe = await auth.generateRecipe(
+                        prompt: cravingInput.isEmpty ? "a delicious recipe" : cravingInput,
+                        dietary: dietaryArray,
+                        style: selectedStyle.isEmpty ? "home cooking" : selectedStyle
+                    ) {
+                        await MainActor.run {
+                            recipes.append(generatedRecipe)
+                            auth.incrementRecipeCount()
+                            isPresented = false
+                            isGenerating = false
+                        }
+                    } else {
+                        await MainActor.run {
+                            isGenerating = false
+                        }
+                    }
+                }
             }) {
-                Text("Generate Recipe")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 52)
-                    .background(cravingInput.isEmpty ? Color.brandSecondary.opacity(0.4) : Color.brandText)
-                    .cornerRadius(16)
+                HStack {
+                    if isGenerating {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .scaleEffect(0.8)
+                    }
+                    Text(isGenerating ? "Generating..." : "Generate Recipe")
+                        .font(.headline)
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+                .background(cravingInput.isEmpty ? Color.brandSecondary.opacity(0.4) : Color.brandText)
+                .cornerRadius(16)
             }
+            .disabled(cravingInput.isEmpty || isGenerating)
             .disabled(cravingInput.isEmpty)
             .padding(.horizontal)
             .padding(.top, 10)
@@ -1166,20 +1548,26 @@ struct AIGeneratorView: View {
                 }
                 
                 let filteredIngredients = ingredientFields.filter { !$0.isEmpty }
-                let randomImageId = ["1541519227354-08fa5d50c44d", "1621996346565-e3dbc646d9a9", "1495195129352-aec325b55b65", "1504674900247-97ec8e7455f2"].randomElement() ?? "1541519227354-08fa5d50c44d"
-                let newRecipe = Recipe(
-                    title: "Ingredient-Based Creation",
-                    description: "A recipe crafted from your available ingredients: \(filteredIngredients.joined(separator: ", ")).",
-                    ingredients: filteredIngredients.isEmpty ? ["Available ingredients"] : filteredIngredients,
-                    instructions: ["Prepare your ingredients.", "Follow cooking instructions tailored to your available items."],
-                    prepTime: 20,
-                    imageUrl: "https://images.unsplash.com/photo-\(randomImageId)?q=80&w=600&auto=format&fit=crop",
-                    photographerName: "Unsplash",
-                    photographerUrl: "https://unsplash.com"
-                )
-                recipes.append(newRecipe)
-                auth.incrementRecipeCount()
-                isPresented = false
+                
+                Task {
+                    let imageUrl = await auth.fetchFoodImage(query: filteredIngredients.first ?? "food")
+                    
+                    await MainActor.run {
+                        let newRecipe = Recipe(
+                            title: "Ingredient-Based Creation",
+                            description: "A recipe crafted from your available ingredients: \(filteredIngredients.joined(separator: ", ")).",
+                            ingredients: filteredIngredients.isEmpty ? ["Available ingredients"] : filteredIngredients,
+                            instructions: ["Prepare your ingredients.", "Follow cooking instructions tailored to your available items."],
+                            prepTime: 20,
+                            imageUrl: imageUrl,
+                            photographerName: "Unsplash",
+                            photographerUrl: "https://unsplash.com"
+                        )
+                        recipes.append(newRecipe)
+                        auth.incrementRecipeCount()
+                        isPresented = false
+                    }
+                }
             }) {
                 Text("Generate Recipe from Ingredients")
                     .font(.headline)
@@ -1343,20 +1731,26 @@ struct AIGeneratorView: View {
                 }
                 
                 let calculatedTime = Int(manualPrepTime) ?? 10
-                let randomImageId = ["1541519227354-08fa5d50c44d", "1621996346565-e3dbc646d9a9", "1495195129352-aec325b55b65", "1504674900247-97ec8e7455f2"].randomElement() ?? "1541519227354-08fa5d50c44d"
-                let newRecipe = Recipe(
-                    title: manualTitle.isEmpty ? "Custom Created Recipe" : manualTitle,
-                    description: manualDescription.isEmpty ? "Manually documented cookbook creation." : manualDescription,
-                    ingredients: manualIngredients.filter { !$0.isEmpty },
-                    instructions: manualInstructions.filter { !$0.isEmpty },
-                    prepTime: calculatedTime,
-                    imageUrl: "https://images.unsplash.com/photo-\(randomImageId)?q=80&w=600&auto=format&fit=crop",
-                    photographerName: "Unsplash",
-                    photographerUrl: "https://unsplash.com"
-                )
-                recipes.append(newRecipe)
-                auth.incrementRecipeCount()
-                isPresented = false
+                
+                Task {
+                    let imageUrl = await auth.fetchFoodImage(query: manualTitle.isEmpty ? "food" : manualTitle)
+                    
+                    await MainActor.run {
+                        let newRecipe = Recipe(
+                            title: manualTitle.isEmpty ? "Custom Created Recipe" : manualTitle,
+                            description: manualDescription.isEmpty ? "Manually documented cookbook creation." : manualDescription,
+                            ingredients: manualIngredients.filter { !$0.isEmpty },
+                            instructions: manualInstructions.filter { !$0.isEmpty },
+                            prepTime: calculatedTime,
+                            imageUrl: imageUrl,
+                            photographerName: "Unsplash",
+                            photographerUrl: "https://unsplash.com"
+                        )
+                        recipes.append(newRecipe)
+                        auth.incrementRecipeCount()
+                        isPresented = false
+                    }
+                }
             }) {
                 Text("Save Recipe")
                     .font(.headline)
@@ -1368,6 +1762,164 @@ struct AIGeneratorView: View {
             }
             .disabled(manualTitle.isEmpty)
             .padding(.horizontal)
+        }
+    }
+}
+
+struct EditRecipeSheet: View {
+    @Environment(\.dismiss) var dismiss
+    let recipe: Recipe
+    let onSave: (Recipe) -> Void
+    
+    @State private var title: String
+    @State private var description: String
+    @State private var ingredients: [String]
+    @State private var instructions: [String]
+    @State private var prepTime: String
+    
+    init(recipe: Recipe, onSave: @escaping (Recipe) -> Void) {
+        self.recipe = recipe
+        self.onSave = onSave
+        self._title = State(initialValue: recipe.title)
+        self._description = State(initialValue: recipe.description)
+        self._ingredients = State(initialValue: recipe.ingredients)
+        self._instructions = State(initialValue: recipe.instructions)
+        self._prepTime = State(initialValue: String(recipe.prepTime))
+    }
+    
+    var body: some View {
+        NavigationView {
+            ZStack {
+                Color.brandBg.ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: 20) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Recipe Title")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.brandSecondary)
+                            TextField("Recipe name", text: $title)
+                                .padding()
+                                .background(Color.brandCard)
+                                .cornerRadius(12)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Description")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.brandSecondary)
+                            TextField("Brief description", text: $description)
+                                .padding()
+                                .background(Color.brandCard)
+                                .cornerRadius(12)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Prep Time (minutes)")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.brandSecondary)
+                            TextField("30", text: $prepTime)
+                                .keyboardType(.numberPad)
+                                .padding()
+                                .background(Color.brandCard)
+                                .cornerRadius(12)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Ingredients")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.brandSecondary)
+                            
+                            ForEach(0..<ingredients.count, id: \.self) { index in
+                                HStack {
+                                    TextField("Ingredient", text: $ingredients[index])
+                                        .padding()
+                                        .background(Color.brandCard)
+                                        .cornerRadius(12)
+                                    Button(action: { ingredients.remove(at: index) }) {
+                                        Image(systemName: "minus.circle.fill")
+                                            .foregroundColor(.red)
+                                    }
+                                }
+                            }
+                            
+                            Button(action: { ingredients.append("") }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 12))
+                                    Text("Add Ingredient")
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                }
+                                .foregroundColor(.brandGold)
+                            }
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Instructions")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.brandSecondary)
+                            
+                            ForEach(0..<instructions.count, id: \.self) { index in
+                                HStack {
+                                    TextField("Step", text: $instructions[index])
+                                        .padding()
+                                        .background(Color.brandCard)
+                                        .cornerRadius(12)
+                                    Button(action: { instructions.remove(at: index) }) {
+                                        Image(systemName: "minus.circle.fill")
+                                            .foregroundColor(.red)
+                                    }
+                                }
+                            }
+                            
+                            Button(action: { instructions.append("") }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 12))
+                                    Text("Add Step")
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                }
+                                .foregroundColor(.brandGold)
+                            }
+                        }
+                    }
+                    .padding()
+                }
+            }
+            .navigationTitle("Edit Recipe")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Save") {
+                        let updatedRecipe = Recipe(
+                            id: recipe.id,
+                            title: title.isEmpty ? recipe.title : title,
+                            description: description.isEmpty ? recipe.description : description,
+                            ingredients: ingredients.filter { !$0.isEmpty },
+                            instructions: instructions.filter { !$0.isEmpty },
+                            prepTime: Int(prepTime) ?? recipe.prepTime,
+                            imageUrl: recipe.imageUrl,
+                            photographerName: recipe.photographerName,
+                            photographerUrl: recipe.photographerUrl
+                        )
+                        onSave(updatedRecipe)
+                        dismiss()
+                    }
+                    .disabled(title.isEmpty)
+                }
+            }
         }
     }
 }
