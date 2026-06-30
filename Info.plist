@@ -24,6 +24,7 @@
     <string>16.0</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.food-and-drink</string>
+
     <key>UILaunchScreen</key>
     <dict/>
     <key>CFBundleIcons</key>

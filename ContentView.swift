@@ -696,11 +696,16 @@ struct LoginScreen: View {
         ScrollView {
             VStack(spacing: 0) {
                 ZStack {
-                    Image("cooking")
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(height: 500)
-                        .clipped()
+                    if let uiImage = UIImage(named: "cooking") {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(height: 500)
+                            .clipped()
+                    } else {
+                        Color.brandGold
+                            .frame(height: 500)
+                    }
                     
                     LinearGradient(
                         colors: [
@@ -949,15 +954,17 @@ struct ContentView: View {
     @State private var showingDeleteAlert = false
     @State private var recipeToDelete: Recipe? = nil
     @State private var showingSettings = false
+    @State private var selectedTab = 0
     
     private let recipesKey = "cookery_recipes"
     
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.brandBg.ignoresSafeArea()
-                
-                ScrollView {
+        TabView(selection: $selectedTab) {
+            NavigationStack {
+                ZStack {
+                    Color.brandBg.ignoresSafeArea()
+                    
+                    ScrollView {
                     VStack(alignment: .leading, spacing: 28) {
                         HStack {
                             VStack(alignment: .leading, spacing: 6) {
@@ -1013,7 +1020,6 @@ struct ContentView: View {
                                     .font(.headline)
                                     .fontWeight(.semibold)
                             }
-                            .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
                             .frame(height: 52)
                             .buttonStyle(.borderedProminent)
