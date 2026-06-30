@@ -67,7 +67,7 @@ struct ContentView: View {
                                     .fontWeight(.bold)
                                     .foregroundColor(.brandText)
                                 Text("Your kitchen, thoughtfully guided.")
-                                    .font(.system(.subheadline, design: .sans))
+                                    .font(.subheadline)
                                     .foregroundColor(.brandSecondary)
                             }
                             Spacer()
@@ -80,7 +80,7 @@ struct ContentView: View {
                                 Image(systemName: "sparkles")
                                     .font(.system(size: 14, weight: .semibold))
                                 Text("Generate with AI")
-                                    .font(.system(.headline, design: .sans))
+                                    .font(.headline)
                                     .fontWeight(.semibold)
                             }
                             .foregroundColor(.white)
@@ -108,7 +108,7 @@ struct ContentView: View {
                                                 .foregroundColor(.brandText)
                                             Spacer()
                                             Text("\(recipe.prepTime) min")
-                                                .font(.system(.caption, design: .sans))
+                                                .font(.caption)
                                                 .fontWeight(.semibold)
                                                 .foregroundColor(.brandGold)
                                                 .padding(.horizontal, 10)
@@ -117,7 +117,7 @@ struct ContentView: View {
                                                 .cornerRadius(20)
                                         }
                                         Text(recipe.description)
-                                            .font(.system(.subheadline, design: .sans))
+                                            .font(.subheadline)
                                             .foregroundColor(.brandSecondary)
                                             .multilineTextAlignment(.leading)
                                             .lineSpacing(2)
@@ -166,12 +166,12 @@ struct RecipeDetailView: View {
                                 .font(.system(size: 14))
                                 .foregroundColor(.brandGold)
                             Text("Ready in \(recipe.prepTime) minutes")
-                                .font(.system(.subheadline, design: .sans))
+                                .font(.subheadline)
                                 .foregroundColor(.brandSecondary)
                         }
                         
                         Text(recipe.description)
-                            .font(.system(.body, design: .sans))
+                            .font(.body)
                             .foregroundColor(.brandSecondary)
                             .lineSpacing(4)
                         
@@ -186,7 +186,7 @@ struct RecipeDetailView: View {
                                         .foregroundColor(.brandGold)
                                         .fontWeight(.bold)
                                     Text(ingredient)
-                                        .font(.system(.subheadline, design: .sans))
+                                        .font(.subheadline)
                                         .foregroundColor(.brandText)
                                 }
                             }
@@ -208,7 +208,7 @@ struct RecipeDetailView: View {
                             ForEach(0..<recipe.instructions.count, id: \.self) { index in
                                 HStack(alignment: .top, spacing: 12) {
                                     Text("\(index + 1)")
-                                        .font(.system(.subheadline, design: .sans))
+                                        .font(.subheadline)
                                         .fontWeight(.bold)
                                         .foregroundColor(.brandGold)
                                         .frame(width: 22, height: 22)
@@ -216,7 +216,7 @@ struct RecipeDetailView: View {
                                         .clipShape(Circle())
                                     
                                     Text(recipe.instructions[index])
-                                        .font(.system(.subheadline, design: .sans))
+                                        .font(.subheadline)
                                         .foregroundColor(.brandText)
                                         .lineSpacing(3)
                                 }
@@ -240,7 +240,7 @@ struct RecipeDetailView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") { dismiss() }
-                        .font(.system(.body, design: .sans))
+                        .font(.body)
                         .foregroundColor(.brandText)
                 }
             }
@@ -262,44 +262,41 @@ struct AIGeneratorView: View {
     
     var body: some View {
         NavigationView {
-            ZStack {
-                Color.brandBg.ignoresSafeArea()
+            Form {
+                Section(header: Text("What's in your fridge?").font(.caption).foregroundColor(.brandSecondary)) {
+                    TextField("Ingredients (e.g., eggs, tomato)", text: $ingredients)
+                        .font(.body)
+                }
+                .listRowBackground(Color.brandCard)
                 
-                Form {
-                    Section(header: Text("What's in your fridge?").font(.system(.caption, design: .sans)).foregroundColor(.brandSecondary)) {
-                        TextField("Ingredients (e.g., eggs, tomato)", text: $ingredients)
-                            .font(.system(.body, design: .sans))
+                Section {
+                    Button(action: {
+                        let newRecipe = Recipe(
+                            title: "AI Generated Meal",
+                            description: "A custom creation using your ingredients.",
+                            ingredients: ingredients.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) },
+                            instructions: ["Combine the ingredients.", "Cook thoroughly.", "Serve hot."],
+                            prepTime: 10
+                        )
+                        recipes.append(newRecipe)
+                        isPresented = false
+                    }) {
+                        Text("Generate Recipe")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .foregroundColor(ingredients.isEmpty ? .secondary : .white)
                     }
-                    .listRowBackground(Color.brandCard)
-                    
-                    Section {
-                        Button(action: {
-                            let newRecipe = Recipe(
-                                title: "AI Generated Meal",
-                                description: "A custom creation using your ingredients.",
-                                ingredients: ingredients.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) },
-                                instructions: ["Combine the ingredients.", "Cook thoroughly.", "Serve hot."],
-                                prepTime: 10
-                            )
-                            recipes.append(newRecipe)
-                            isPresented = false
-                        }) {
-                            Text("Generate Recipe")
-                                .font(.system(.headline, design: .sans))
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .foregroundColor(ingredients.isEmpty ? .secondary : .white)
-                        }
-                        .disabled(ingredients.isEmpty)
-                        .listRowBackground(ingredients.isEmpty ? Color(.systemGray4) : Color.brandText)
-                    }
+                    .disabled(ingredients.isEmpty)
+                    .listRowBackground(ingredients.isEmpty ? Color(.systemGray4) : Color.brandText)
                 }
             }
+            .background(Color.brandBg.ignoresSafeArea())
             .navigationTitle("AI Recipe Creator")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") { isPresented = false }
-                        .font(.system(.body, design: .sans))
+                        .font(.body)
                         .foregroundColor(.brandSecondary)
                 }
             }
