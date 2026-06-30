@@ -1181,15 +1181,24 @@ struct ContentView: View {
                     Text(error)
                 }
             }
+            .onAppear {
+                auth.loadProduct()
+                loadRecipes()
+            }
+            .onChange(of: recipes) { _ in
+                saveRecipes()
+            }
+            .tabItem {
+                Label("Home", systemImage: "house.fill")
+            }
+            .tag(0)
+        
+        CommunityView()
+            .tabItem {
+                Label("Community", systemImage: "person.2.fill")
+            }
+            .tag(1)
         }
-        .onAppear {
-            auth.loadProduct()
-            loadRecipes()
-        }
-        .onChange(of: recipes) { _ in
-            saveRecipes()
-        }
-    }
     
     private func loadRecipes() {
         if let data = UserDefaults.standard.data(forKey: recipesKey),
@@ -2708,5 +2717,126 @@ struct EditRecipeSheet: View {
                 }
             }
         }
+    }
+}
+
+@available(iOS 16.0, *)
+struct CommunityView: View {
+    @State private var communityRecipes: [Recipe] = []
+    @State private var isLoading = false
+    @State private var errorMessage: String? = nil
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.brandBg.ignoresSafeArea()
+                
+                if isLoading {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .brandGold))
+                } else if communityRecipes.isEmpty {
+                    VStack(spacing: 16) {
+                        Image(systemName: "person.2")
+                            .font(.system(size: 48))
+                            .foregroundColor(.brandSecondary)
+                        Text("No community recipes yet")
+                            .font(.headline)
+                            .foregroundColor(.brandText)
+                        Text("Be the first to share a recipe!")
+                            .font(.subheadline)
+                            .foregroundColor(.brandSecondary)
+                    }
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("Community Recipes")
+                                .font(.system(.title2, design: .serif))
+                                .fontWeight(.medium)
+                                .foregroundColor(.brandText)
+                                .padding(.horizontal)
+                            
+                            ForEach(communityRecipes) { recipe in
+                                VStack(alignment: .leading, spacing: 0) {
+                                    if let imageUrl = recipe.imageUrl {
+                                        AsyncImage(url: URL(string: imageUrl)) { phase in
+                                            switch phase {
+                                            case .empty:
+                                                Rectangle()
+                                                    .fill(Color.brandBg)
+                                                    .frame(height: 160)
+                                            case .success(let image):
+                                                image
+                                                    .resizable()
+                                                    .aspectRatio(contentMode: .fill)
+                                                    .frame(height: 160)
+                                                    .clipped()
+                                            case .failure:
+                                                Rectangle()
+                                                    .fill(Color.brandBg)
+                                                    .frame(height: 160)
+                                                    .overlay {
+                                                        Image(systemName: "photo")
+                                                            .foregroundColor(.brandSecondary)
+                                                    }
+                                            @unknown default:
+                                                EmptyView()
+                                            }
+                                        }
+                                    }
+                                    
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        HStack(alignment: .firstTextBaseline) {
+                                            Text(recipe.title)
+                                                .font(.system(.headline, design: .serif))
+                                                .foregroundColor(.brandText)
+                                            Spacer()
+                                            Text("\(recipe.prepTime) min")
+                                                .font(.caption)
+                                                .fontWeight(.semibold)
+                                                .foregroundColor(.brandGold)
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 4)
+                                                .background(Color.brandGoldLight)
+                                                .cornerRadius(20)
+                                        }
+                                        Text(recipe.description)
+                                            .font(.subheadline)
+                                            .foregroundColor(.brandSecondary)
+                                            .multilineTextAlignment(.leading)
+                                            .lineSpacing(2)
+                                    }
+                                    .padding(20)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.brandCard)
+                                .cornerRadius(24)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 24)
+                                        .stroke(Color.brandBorder, lineWidth: 1)
+                                )
+                                .padding(.horizontal)
+                            }
+                        }
+                        .padding(.vertical)
+                    }
+                }
+            }
+            .navigationTitle("Community")
+            .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                loadCommunityRecipes()
+            }
+        }
+    }
+    
+    private func loadCommunityRecipes() {
+        isLoading = true
+        Task {
+            await fetchCommunityRecipes()
+        }
+    }
+    
+    private func fetchCommunityRecipes() async {
+        isLoading = false
     }
 }
